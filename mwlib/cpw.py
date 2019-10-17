@@ -130,7 +130,7 @@ if __name__ == '__main__':
     # Rainier paper
     al = sc.Superconductor(1.28, 1.1e-8, t = 80e-9,f = 6.6e9)
     nbtin = sc.Superconductor(14.5, 1.3e-6, t = 300e-9, f = 350e9)
-    nbtin_thin = sc.Superconductor(15, 1.2e-6, t = 100e-9, f = 350e9)
+    nbtin_thin = sc.Superconductor(15, 1.29e-6, t = 100e-9, f = 350e9)
     hybrid = CPW(3e-6, 3e-6, 11.44, scgnd = nbtin, scline = al)
     wide = CPW(5.4e-6, 23.7e-6, 11.44, scgnd = nbtin, scline = nbtin)
     hybrid.holloway()
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     al = sc.Superconductor(1.28, 2.2e-8, t = 50e-9, f = 6.6e9)
     algnd = sc.Superconductor(1.28, 0.28e-8, t = 100e-9, f = 6.6e9)
 #    nbtin = sc.Superconductor()
-    cpw = CPW(1e-6, 1e-6, 10.5, scline = nbtin_thin, scgnd = nbtin_thin)
+    cpw = CPW(1.5e-6, 1.5e-6, 11.44, scline = nbtin_thin, scgnd = nbtin_thin)
     cpw.holloway()
 #    print tline.holloway()
 

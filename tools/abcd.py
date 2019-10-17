@@ -6,7 +6,7 @@ Created on Mon Feb 18 11:41:20 2019
 """
 
 import numpy as np
-from .fabry_perot import interpolate_s, spc
+import scipy.constants as spc
 
 class ABCDmatrix(object):
     def __init__(self, Fresolution = -1):
@@ -14,6 +14,22 @@ class ABCDmatrix(object):
         self.F = np.array([0])
         self.Fresolution = Fresolution
         self.eps_eff = None
+        self.length = 0
+
+#    def getS21(self, Z0char, otype = 'db'):
+#        """
+#        Deprecated and slow
+#        """
+#        Z0char = np.atleast_1d(Z0char)
+#        if len(Z0char) != len(self.F):
+#            Z0char = np.full(len(self.F), np.mean(Z0char))
+#        fct = {'db' : lambda x : 20*np.log10(np.abs(x)),
+#               'linear' : lambda x : np.abs(x),
+#               'imag' : lambda x : np.imag(x),
+#               'real' : lambda x : np.real(x),
+#               'complex' : lambda x : x,
+#               }
+#        return fct[otype](np.array([2/(self.matrix[0,0,i] + (self.matrix[0,1,i]/Z0char[i]) + self.matrix[1,0,i]*Z0char[i] + self.matrix[1,1,i]) for i in xrange(len(self.F))]))
 
     def getS21(self, Z0char, otype = 'db'):
         Z0char = np.atleast_1d(Z0char)
@@ -25,7 +41,7 @@ class ABCDmatrix(object):
                'real' : lambda x : np.real(x),
                'complex' : lambda x : x,
                }
-        return fct[otype](np.array([2/(self.matrix[0,0,i] + (self.matrix[0,1,i]/Z0char[i]) + self.matrix[1,0,i]*Z0char[i] + self.matrix[1,1,i]) for i in xrange(len(self.F))]))
+        return fct[otype](2/(self.matrix[0,0,:] + (self.matrix[0,1,:]/Z0char) + self.matrix[1,0,:]*Z0char + self.matrix[1,1,:]))
 
 
     def getS11(self, Z0char, otype = 'db'):
@@ -51,17 +67,17 @@ class ABCDmatrix(object):
         self.matrix = np.array([[s11, s12],[s21, s22]])
 
 
-    def setMatrix_ts(self, ts,  ctype = 'sparam', inverse = False, length = 0, alpha = 0, eps_force = 0, F = [], Z0 = 0):
+    def setMatrix_ts(self, ts,  ctype = 'sparam', symmetric = True , inverse = False, length = 0, alpha = 0, eps_force = 0, F = [], Z0 = 0):
         """
         alpha in [dB/mm]
         """
         if len(F) != 0:
-            s = interpolate_s(F, ts.f, ts.s)
             self.F = np.array(F)
+            s = self.interpolate_s(self.F, ts.f, ts.s, symmetric)
         else:
             s = ts.s
             self.F = np.arange(ts.f[0], ts.f[-1] + self.Fresolution, self.Fresolution)
-            s = interpolate_s(self.F, ts.f, ts.s)
+            s = self.interpolate_s(self.F, ts.f, ts.s, symmetric)
 
         if ctype == 'sparam':
             self.Z0 = Z0
@@ -143,3 +159,41 @@ class ABCDmatrix(object):
         out.matrix = M
         return out
 
+
+    def interpolate_s(self, fo, fi, s, symmetric = False):
+        """
+        s input form: [freq, portA, portB], i.e. s21 = s[:,1, 0], s32 = s[:,2,1]
+    
+        returns interpolated complex s array
+        """
+        n_ports = s.shape[-1]
+    
+        output = np.zeros((len(fo), n_ports, n_ports), dtype = complex)
+    
+        if symmetric:
+            mag = np.abs(s[:,0,1])
+            angle = np.angle(s[:,0,1])
+            new_mag = np.interp(fo, fi, mag)
+            new_angle = np.interp(fo, fi, angle)
+            output[:,0,1] = new_mag*np.exp(1j*new_angle)
+            output[:,1,0] = output[:,0,1]
+            
+            mag = np.abs(s[:,0,0])
+            angle = np.angle(s[:,0,0])
+            new_mag = np.interp(fo, fi, mag)
+            new_angle = np.interp(fo, fi, angle)
+            output[:,0,0] = new_mag*np.exp(1j*new_angle)
+            output[:,1,1] = output[:,0,0]
+            
+        else:
+            for i in xrange(n_ports):
+                for j in xrange(n_ports):
+                    mag = np.abs(s[:,i,j])
+                    angle = np.angle(s[:,i,j])
+                    new_mag = np.interp(fo, fi, mag)
+                    new_angle = np.interp(fo, fi, angle)
+                    output[:,i,j] = new_mag*np.exp(1j*new_angle)
+                    if any(output[:,i,j].real) == 0:
+                        print "what"
+        
+        return output

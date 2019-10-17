@@ -8,13 +8,255 @@ Created on Thu May 03 11:13:15 2018
 import numpy as np
 import scipy.constants as spc
 from .touchstone import Touchstone, CST_Plotdata
+from .abcd import ABCDmatrix
+from ..util import find_nearest_id
 import scipy.special
 import os
 from glob import glob
 import matplotlib.pyplot as plt
 import time
 
+class FabryPerot(object):
+    def __init__(self, F, ts_coupler, Z0_outside, Z0_line, length, eeff, alpha):
+        self.F = F
+        self.ts = ts_coupler
+        self.Z0 = Z0_outside
+        self.Z0_line = Z0_line
+        self.length = length
+        self.eeff = eeff
+        self.alpha = alpha
+        self.coupler = ABCDmatrix()
+        
+        self.load_coupler(self.ts)
+        self.calc_line()
+        
+    def load_coupler(self, ts):
+        self.ts = ts
+        self.coupler.setMatrix_ts(self.ts, F = self.F)
+    
+    @property
+    def f0(self):
+        return spc.c/(2*self.length*np.sqrt(self.eeff))
+        
+    @classmethod
+    def load_csv(cls, F, filename, part = 0):
+        if not part:
+            fef, value = np.loadtxt(filename, skiprows = 2, delimiter = ',', unpack = True)
+        else:
+            cur_part = 1
+            got_numbers = False
+            with open(filename, 'r') as ff:
+                lines = ff.readlines()
+                fef = []
+                value = []
+                for line in lines:
+                    values = line.split(',')
+                    if len(values) == 1:
+                        if got_numbers:
+                            cur_part += 1
+                            got_numbers = False
+                        continue
+                    else:
+                        got_numbers = True
+                        if cur_part == part:
+                            fef.append(float(values[0]))
+                            value.append(float(values[1]))
+                        elif cur_part < part:
+                            continue
+                        else:
+                            break                            
+        fef = np.array(fef)                   
+        tck = scipy.interpolate.splrep(fef*1e9, value, k = 3)
+        value_interp = scipy.interpolate.splev(F, tck, der=0)
+        return value_interp
+    
+    @classmethod
+    def spline_interp(cls, fi, fo, data):
+        tck = scipy.interpolate.splrep(fi, data, k = 3)
+        value_interp = scipy.interpolate.splev(fo, tck, der=0)
+        return tck,value_interp
+    
+    def calc_line(self, z0_line = -1, length=-1, eeff=-1, alpha=-1):
+        if length >=0:
+            self.length = length
+        if np.any(z0_line != -1):
+            self.Z0_line = z0_line
+        self.arr_n_hr = 2*self.length*np.sqrt(self.eeff)*self.F/spc.c
+        arr_nint_hr = self.arr_n_hr.astype(int)
+        arr_nint_u_hr = np.unique(arr_nint_hr)
+        self.mask_n_hr = [np.where(arr_nint_hr==v)[0][0] for v in arr_nint_u_hr]
+    
+    def calc_Q(self, which = 'ci', squeezed = True, smooth = 0, exp = True):
+        s21c = self.coupler.getS21(self.Z0, otype = 'linear')
+        if exp:
+            s21c = s21c*(1-np.abs(self.Z0-self.Z0_line)/(self.Z0+self.Z0_line))
+            self.correction_s21c =(1-np.abs(self.Z0-self.Z0_line)/(self.Z0+self.Z0_line))
+        else:
+            self.correction_s21c = np.ones_like(self.Z0)
+        self.s21c = s21c
+        arr_Q_highres = self.arr_n_hr*np.pi/(s21c**2)
+        if squeezed:
+            delF_init = self.F/arr_Q_highres
+            F2_init = self.F + delF_init/2 # Get 3dB freqs
+            F1_init = self.F - delF_init/2
+            phi2 = 2*np.pi*F2_init*np.sqrt(self.eeff)/spc.c * self.length # get phase at 3dB freqs for each center frequency -> this calculation is performed at the id corresponding to continuous peak centers
+            phi1 = 2*np.pi*F1_init*np.sqrt(self.eeff)/spc.c * self.length
+            # Get array with correct F,eeff->phi indexing  
+            phi_correct = 2*np.pi*self.F*np.sqrt(self.eeff)/spc.c * self.length
+            F2 = self.F[[find_nearest_id(phi_correct[self.mask_n_hr[ii]:self.mask_n_hr[ii+2]], phi2[v]) for ii,v in enumerate(self.mask_n_hr[1:-1])]]
+            F1 = self.F[[find_nearest_id(phi_correct[self.mask_n_hr[ii]:self.mask_n_hr[ii+2]], phi1[v]) for ii,v in enumerate(self.mask_n_hr[1:-1])]]
+            mask_Q_hr = self.mask_n_hr[1:-1]
+            arr_Qcorr = self.F[mask_Q_hr]/(F2-F1)
+            if smooth:
+                arr_Qcorr = scipy.signal.savgol_filter(arr_Qcorr, smooth, 3)
+            self.Q = arr_Qcorr
+            self.mask_Q = mask_Q_hr
+            self.smooth = smooth
+            self.squeezed = squeezed
+            return arr_Qcorr, mask_Q_hr
+        else:
+            self.Q = arr_Q_highres
+            self.mask_Q = self.mask_n_hr
+            self.smooth = smooth
+            self.squeezed = squeezed
+            return arr_Q_highres, self.mask_n_hr
 
+    def get_Q_at_F(self, F_val, Q_arr = []):
+        if Q_arr == []:
+            Q_arr = self.Q
+        assert F_val >= self.F[0] and F_val <= self.F[-1] # make sure that we are looking in the proper array
+        return Q_arr[find_nearest_id(self.F[self.mask_Q], F_val)]
+
+    def do_abcd(self):
+        A = self.coupler
+        B = ABCDmatrix()
+        B.setMatrix_line(self.length, self.Z0_line, self.alpha, beta = -1, F = self.F, eps_eff = self.eeff)
+        C = self.coupler
+        self.A = A
+        self.B = B
+        self.C = C
+        self.M = A.multiply(B.multiply(C))
+        self.M.length = self.B.length
+        return self.M
+        
+    
+class SimPeaks(object):
+    def __init__(self):
+        self.f = []
+        self.s21 = []
+        self.peak_mask = []
+        self.peak_ids = []
+        self.peak_max = []
+        self.peak_freq = []
+        self.mask_3db = []
+        self.mask_3db_left = []
+        self.mask_3db_right = []
+        self.peak_Q = []
+        self.peak_phaseDelta = []
+        self.peak_phaseLeft = []
+        self.peak_phaseRight = []
+        self.fit_masks = []
+        
+    def applyPrimary(self, func):
+        self.peak_mask = func(self.peak_mask)
+        self.peak_max = func(self.peak_max)
+        self.peak_ids = func(self.peak_ids[0])
+        self.peak_freq =func(self.peak_freq)
+        self.mask_3db =func(self.mask_3db)
+        self.mask_3db_left =func(self.mask_3db_left)
+        self.mask_3db_right =func(self.mask_3db_right)
+        
+def get_peaks_sim(s21tot):
+    peak_mask =  np.r_[False, s21tot[1:] > s21tot[:-1]] & np.r_[s21tot[:-1] > s21tot[1:], False]
+    peak_ids = np.where(peak_mask)[0]
+    return peak_mask, peak_ids
+    
+# def get_Q_sim(s21tot, f, peak_mask, peak_ids):
+
+def get_Q_ofMatrix(matrix, Z0):
+    s21tot = matrix.getS21(Z0)
+    s21_linear = matrix.getS21(Z0, otype='linear')
+    
+    peak_mask, peak_ids = get_peaks_sim(s21tot)
+    if type(peak_ids) == tuple:
+        peak_ids = peak_ids[0]
+    
+    f = matrix.F
+    peak_max = s21tot[peak_mask]
+    peak_freq = f[peak_mask]
+    num_peaks = len(peak_max)
+
+    sp = SimPeaks()
+    sp.peak_mask = peak_mask
+    sp.peak_ids = peak_ids
+    sp.f = f
+    sp.s21= s21tot
+    sp.peak_max = peak_max
+    sp.peak_freq = peak_freq
+    print 'masking'
+
+    leftedge = lambda x: 0 if x == 0 else peak_ids[x-1]
+    rightedge = lambda x: len(s21tot)-1 if x == num_peaks-1 else peak_ids[x+1]
+    id_left = []
+    id_right  = []
+    Q_fitted = []
+    for i,v in enumerate(peak_ids):
+        jl = v-1
+        jr = v+1
+        left_id = None
+        right_id  = None
+        ref = peak_max[i]-3
+
+        while not left_id or not right_id:
+            if (s21tot[jl] <= ref or jl == leftedge(i)) and not left_id:
+                left_id = jl
+                id_left.append(jl)
+            else:
+                jl -= 1
+            if (s21tot[jr] <= ref or jr == rightedge(i)) and not right_id:
+                right_id = jr
+                id_right.append(jr)
+            else:
+                jr += 1
+        bw0 =  sp.f[right_id]-sp.f[left_id]
+        p0 = [ np.pi*bw0/2 , sp.peak_freq[i], bw0]
+        fit_mask = slice(left_id - 3*(v-left_id), right_id + 3*(right_id-v))
+#         popt, pcov = scipy.optimize.curve_fit(cdt.fabry_perot.lorentz, sp.f[fit_mask], s21_linear[fit_mask], p0)
+        sp.fit_masks.append(fit_mask)
+#         Q_fitted.append(popt[1]/popt[2])
+        if i > num_peaks-1:
+            fig, ax = plt.subplots()
+            ax.scatter(sp.f[fit_mask]*1e-9, s21_linear[fit_mask]**2, s = 5)
+#             ax.plot(sp.f[fit_mask]*1e-9, cdt.fabry_perot.lorentz(sp.f[fit_mask], *popt), color = 'green')
+            ax.plot(sp.f[fit_mask]*1e-9, lorentz(sp.f[fit_mask], *p0), color = 'orange')
+            ax.axvline(f[id_right[-1]]*1e-9)
+            ax.axvline(f[id_left[-1]]*1e-9)
+            ax.set_title(str(i)+' '+str(v))
+    matrix.eps_eff= np.full(matrix.F.shape, matrix.eps_eff)
+#    sp.peak_n = 2*matrix.length*np.sqrt(matrix.eps_eff[peak_mask])*sp.peak_freq/spc.c
+#    sp.peak_phaseDelta = (2*np.pi*f[id_right]*np.sqrt(matrix.eps_eff[id_right])/spc.c - 2*np.pi*f[id_left]*np.sqrt(matrix.eps_eff[id_left])/spc.c) * matrix.length
+#    sp.peak_phaseLeft = 2*np.pi*f[id_left]*np.sqrt(matrix.eps_eff[id_left])/spc.c * matrix.length
+#    sp.peak_phaseRight = 2*np.pi*f[id_right]*np.sqrt(matrix.eps_eff[id_right])/spc.c * matrix.length
+    sp.id_left = id_left
+    sp.id_right = id_right
+    id_left = np.array(id_left)
+    id_right = np.array(id_right)
+    x1 = f[id_right]
+    x2 = f[id_right-1]
+    y1 = s21tot[id_right]
+    y2 = s21tot[id_right+1]
+    f_right = (((sp.peak_max-3-y1)/(y2-y1))*(x2-x1))+x1
+
+    x1 = f[id_left]
+    x2 = f[id_left+1]
+    y1 = s21tot[id_left]
+    y2 = s21tot[id_left+1]
+    f_left = (((sp.peak_max-3-y1)/(y2-y1))*(x2-x1))+x1
+
+    Q_abcd = sp.peak_freq/(f_right - f_left)
+    sp.Q = Q_abcd
+    return sp, Q_abcd    
+        
 def interpolate_s(fo, fi, s):
     """
     s input form: [freq, portA, portB], i.e. s21 = s[:,1, 0], s32 = s[:,2,1]
