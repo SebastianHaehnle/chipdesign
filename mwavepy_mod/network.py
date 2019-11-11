@@ -206,17 +206,17 @@ class Network(object):
 
 		return output
 
-	def __str__(self):
-		'''
-		'''
-		f=self.frequency
-		output =  \
-			'%i-Port Network.  %i-%i %s.  %i points. z0='% \
-			(self.number_of_ports,f.f_scaled[0],f.f_scaled[-1],f.unit, f.npoints)+str(self.z0[0,:])
-
-		return output
-	def __repr__(self):
-		return self.__str__()
+#	def __str__(self):
+#		'''
+#		'''
+#		f=self.frequency
+#		output =  \
+#			'%i-Port Network.  %i-%i %s.  %i points. z0='% \
+#			(self.number_of_ports,f.f_scaled[0],f.f_scaled[-1],f.unit, f.npoints)+str(self.z0[0,:])
+#
+#		return output
+#	def __repr__(self):
+#		return self.__str__()
 
 ## PRIMARY PROPERTIES
 	@property

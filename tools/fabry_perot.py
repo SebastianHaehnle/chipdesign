@@ -535,7 +535,7 @@ def frankel(f, w, s, eps_r, eps_eff = 0):
     beta = 2*np.pi*(f/spc.c)*np.sqrt(eps_eff)
 
     Z0CPW = ((120*np.pi)/np.sqrt(eps_eff))*(scipy.special.ellipk(np.sqrt(1-(k**2)))/(4.*scipy.special.ellipk(k)))
-    return alpha, eps_eff, Z0CPW
+    return alpha, beta, eps_eff, Z0CPW
 
 def s21min(mode, Qc):
     T = mode*np.pi/Qc
