@@ -13,6 +13,19 @@ class Touchstone(mwmod.Network):
         mwmod.Network.__init__(self)
         self.read_touchstone(filepath)
         self.params = params
+        if self.params == {}:
+            with open(filepath, 'r') as ff:
+                active = False
+                lines = ff.readlines()
+                for line in lines:
+                    if active == True:
+                        if line[3:-1] == 'END PARAMS':
+                            active = False
+                        else:
+                            eq_id = line.index('=')
+                            self.params[line[3:eq_id-1]] = float(line[eq_id+2:-1])
+                    elif line[3:-1] == 'PARAMS':
+                        active = True
 
     @property
     def s12(self):

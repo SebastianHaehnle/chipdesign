@@ -20,3 +20,8 @@ class Resonator_Series(object):
         Qi = Q_loaded*Qc/(np.abs(Qc - Q_loaded))
         Ql = Q_loaded
         return [Ql, Qi, Qc]
+
+
+
+    
+    

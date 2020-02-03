@@ -16,22 +16,13 @@ class ABCDmatrix(object):
         self.eps_eff = None
         self.length = 0
 
-#    def getS21(self, Z0char, otype = 'db'):
-#        """
-#        Deprecated and slow
-#        """
-#        Z0char = np.atleast_1d(Z0char)
-#        if len(Z0char) != len(self.F):
-#            Z0char = np.full(len(self.F), np.mean(Z0char))
-#        fct = {'db' : lambda x : 20*np.log10(np.abs(x)),
-#               'linear' : lambda x : np.abs(x),
-#               'imag' : lambda x : np.imag(x),
-#               'real' : lambda x : np.real(x),
-#               'complex' : lambda x : x,
-#               }
-#        return fct[otype](np.array([2/(self.matrix[0,0,i] + (self.matrix[0,1,i]/Z0char[i]) + self.matrix[1,0,i]*Z0char[i] + self.matrix[1,1,i]) for i in xrange(len(self.F))]))
 
-    def getS21(self, Z0char, otype = 'db'):
+    def getS21(self, Z0char, Z02 = None, otype = 'db'):
+        """
+        If Z02 is given, Z0char is set as port 1 impedance and Z02 as port 2 impedance. Otherwise Z0char is the impedance for both ports.
+        
+        Possible options for otype: 'db', 'linear', 'imag', 'real', 'complex'
+        """
         Z0char = np.atleast_1d(Z0char)
         if len(Z0char) != len(self.F):
             Z0char = np.full(len(self.F), np.mean(Z0char))
@@ -41,7 +32,11 @@ class ABCDmatrix(object):
                'real' : lambda x : np.real(x),
                'complex' : lambda x : x,
                }
-        return fct[otype](2/(self.matrix[0,0,:] + (self.matrix[0,1,:]/Z0char) + self.matrix[1,0,:]*Z0char + self.matrix[1,1,:]))
+        Z02 = np.atleast_1d(Z02)
+        if (Z02 != None).any():
+            return fct[otype]((2*np.sqrt(Z0char*Z02))/(Z02*self.matrix[0,0,:] + (self.matrix[0,1,:]) + self.matrix[1,0,:]*Z0char*Z02 + self.matrix[1,1,:]*Z0char))
+        else:
+            return fct[otype](2/(self.matrix[0,0,:] + (self.matrix[0,1,:]/Z0char) + self.matrix[1,0,:]*Z0char + self.matrix[1,1,:]))
 
 
     def getS11(self, Z0char, otype = 'db'):

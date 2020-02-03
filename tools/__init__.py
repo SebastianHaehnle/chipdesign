@@ -11,6 +11,7 @@ Created on Fri Aug 26 15:25:31 2016
 from .touchstone import Touchstone, CST_Plotdata
 from .sonnetSweep import SonnetSweep
 from .kids import s13_2_Qc
+import fit as fit
 
 import abcd
 import fabry_perot

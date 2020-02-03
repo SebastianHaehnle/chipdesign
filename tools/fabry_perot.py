@@ -28,7 +28,8 @@ class FabryPerot(object):
         self.coupler = ABCDmatrix()
         
         self.load_coupler(self.ts)
-        self.calc_line()
+        self.is_linecalc = True
+#        self.calc_line()
         
     def load_coupler(self, ts):
         self.ts = ts
@@ -87,6 +88,9 @@ class FabryPerot(object):
         self.mask_n_hr = [np.where(arr_nint_hr==v)[0][0] for v in arr_nint_u_hr]
     
     def calc_Q(self, which = 'ci', squeezed = True, smooth = 0, exp = True):
+        if not self.is_linecalc:
+            self.calc_line
+            self.is_linecalc = True
         s21c = self.coupler.getS21(self.Z0, otype = 'linear')
         if exp:
             s21c = s21c*(1-np.abs(self.Z0-self.Z0_line)/(self.Z0+self.Z0_line))
