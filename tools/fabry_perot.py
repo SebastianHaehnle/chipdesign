@@ -10,6 +10,7 @@ import scipy.constants as spc
 from .touchstone import Touchstone, CST_Plotdata
 from .abcd import ABCDmatrix
 from ..util import find_nearest_id
+from .fit import fit_lorentzian_curve
 import scipy.special
 import os
 from glob import glob
@@ -17,18 +18,26 @@ import matplotlib.pyplot as plt
 import time
 
 class FabryPerot(object):
-    def __init__(self, F, ts_coupler, Z0_outside, Z0_line, length, eeff, alpha):
-        self.F = F
-        self.ts = ts_coupler
+    def __init__(self, F, ts_coupler, Z0_outside, Z0_line, length, eeff, alpha, n = 3, coupler_method = 'ts'):
+        self.F = F # numpy array
+        self.ts = ts_coupler # touchstone instance
         self.Z0 = Z0_outside
         self.Z0_line = Z0_line
         self.length = length
         self.eeff = eeff
-        self.alpha = alpha
+        self.beta = 2*np.pi*self.F*np.sqrt(self.eeff)/spc.c
+        self.alpha = alpha # Np/m
+        self.n = n
         self.coupler = ABCDmatrix()
         
-        self.load_coupler(self.ts)
+        if coupler_method == 'ts':
+            self.load_coupler(self.ts)
+        elif coupler_method == 'c':
+            self.coupler.setMatrix_C(ts_coupler, F)
         self.is_linecalc = True
+        self.M = None
+        self.peak_ids = []
+        self.peak_modes = []
 #        self.calc_line()
         
     def load_coupler(self, ts):
@@ -131,18 +140,91 @@ class FabryPerot(object):
         assert F_val >= self.F[0] and F_val <= self.F[-1] # make sure that we are looking in the proper array
         return Q_arr[find_nearest_id(self.F[self.mask_Q], F_val)]
 
-    def do_abcd(self):
+    def do_abcd(self, parallelize = True):
         A = self.coupler
         B = ABCDmatrix()
-        B.setMatrix_line(self.length, self.Z0_line, self.alpha, beta = -1, F = self.F, eps_eff = self.eeff)
+        B.setMatrix_line(self.length, self.Z0_line, self.alpha, beta = -1, F = self.F, eps_eff = self.eeff, n = self.n)
         C = self.coupler
         self.A = A
         self.B = B
         self.C = C
-        self.M = A.multiply(B.multiply(C))
+        self.M = A.multiply(B.multiply(C, parallelize = parallelize), parallelize = parallelize)
         self.M.length = self.B.length
+        self.s21 = self.M.getS21(self.Z0)
         return self.M
+    
+    def create_floor(self, level = -30):
+        pass
+    
+    def find_peaks(self, cutoff_peakheight = None):
+        if self.M != None:
+            s21 = self.M.getS21(self.Z0)
+            peak_mask, peak_ids = get_peaks_sim(s21)
+            if peak_ids[0][0] == 0:
+                peak_ids = (peak_ids[0][1:], )
+            if peak_ids[0][-1] == len(s21)-1:
+                peak_ids = (peak_ids[0][:-1], )
+        else:
+            print "ERROR: ABCD MATRIX NOT EVALUATED. CANT FIND PEAKS"
+        self.peak_ids = peak_ids[0]
+        return self.peak_ids
+    
+    def get_Q_from_peaks(self):
+        self.find_peaks()
+#        peak_freqs = self.F[self.peak_ids]
+        d_id = np.mean(np.diff(self.peak_ids))
+        fit_slices = [slice(int(max(0, p_id-0.25*d_id)), int(min(len(self.F), p_id+0.25*d_id))) for p_id in self.peak_ids]
+        self.peak_slices = fit_slices
+        self.Q = []
+        self.Qi = []
+        self.Qc = []
+        self.peak_popt = []
         
+        s21 = self.M.getS21(self.Z0, otype = 'power')
+        fit_failures = False
+        fails = []
+        for i, sli in enumerate(fit_slices):
+            try:
+                popt, pocv = fit_lorentzian_curve(self.F[sli], s21[sli], error = True)
+                self.Q.append(popt[1]/(2*popt[0]))
+                self.Qc.append(self.Q[-1]/np.max(np.sqrt(s21[sli])))
+                self.Qi.append(self.Q[-1]*self.Qc[-1]/(self.Qc[-1]-self.Q[-1]))
+                self.peak_popt.append(popt)
+            except:
+                fit_failures = True
+                print 'fit bad ', i, self.peak_freqs[i]
+                fails.append(i)
+                
+        if fit_failures:
+            self.peak_ids = np.delete(self.peak_ids, fails)
+
+    
+
+    @property
+    def peak_freqs(self):
+        return self.F[self.peak_ids]
+         
+    def calc_peak_modes(self):
+        df = np.mean(self.peak_freqs[1:] - self.peak_freqs[:-1])
+        self.peak_modes = self.peak_freqs/df         
+    
+    def calc_alpha(self, Qi = []):
+        if Qi == []:
+            Qi = self.Q
+        if self.peak_freqs == []:
+            self.calc_peak_modes()
+        beta = 2*np.pi*self.F*np.sqrt(self.eeff)/spc.c
+        beta = beta[self.peak_ids]
+        return beta/(np.array(Qi)*2)
+                     
+    def calc_beta(self):
+        if self.peak_freqs == []:
+            self.calc_peak_modes()
+        return 2*np.pi*self.F*np.sqrt(self.eeff)/spc.c
+        return 'not implemented' 
+    
+        
+            
     
 class SimPeaks(object):
     def __init__(self):
@@ -305,6 +387,7 @@ def abcd_fabryperot_inline(F, S, Z0cpw, Z0char, Z01, eps_eff, alpha, length_use,
     s21_tot = np.zeros_like(s11)
 
     # stupid debug section WARNING
+
 
     #%%
     M1t = np.array([[((1+s11)*(1-s22)+s12*s12)/(2*s12),
@@ -518,7 +601,14 @@ def lorentz(x, A, fc, fwhm):
 #@np.vectorize
 def frankel(f, w, s, eps_r, eps_eff = 0):
     """
-    Returns (alpha [Np/m], eps_eff, Z0 [Ohm])
+    Input:
+        f :: frequency [Hz]
+        w :: slot width [um]
+        s :: line width [um]
+        eps_r :: substrate dielectric constant
+        eps_eff :: (Default = 0) Use manual eps_eff as input; uses frankels formula if eps_eff==0
+        
+    Returns (alpha [Np/m], beta, eps_eff, Z0 [Ohm])
     """
     d = 350e-6
     k = s / (s + 2*w)

@@ -7,6 +7,9 @@ Created on Mon Feb 18 11:41:20 2019
 
 import numpy as np
 import scipy.constants as spc
+import numexpr as ne
+from multiprocessing import Pool
+pool = Pool()
 
 class ABCDmatrix(object):
     def __init__(self, Fresolution = -1):
@@ -31,6 +34,7 @@ class ABCDmatrix(object):
                'imag' : lambda x : np.imag(x),
                'real' : lambda x : np.real(x),
                'complex' : lambda x : x,
+               'power' : lambda x: np.abs(x)**2
                }
         Z02 = np.atleast_1d(Z02)
         if (Z02 != None).any():
@@ -51,15 +55,13 @@ class ABCDmatrix(object):
                }
         return fct[otype](np.array([(self.matrix[0,0,i] + (self.matrix[0,1,i]/Z0char[i]) - self.matrix[1,0,i]*Z0char[i] - self.matrix[1,1,i])/(self.matrix[0,0,i] + (self.matrix[0,1,i]/Z0char[i]) + self.matrix[1,0,i]*Z0char[i] + self.matrix[1,1,i]) for i in xrange(len(self.F))]))
 
-    def setMatrix_C(self, C, F = []):
-        self.F = np.atleast_1d(F)
-        if self.F[1] - self.F[0] != self.Fresolution:
-            self.F = np.arange(self.F[0], self.F[-1]+self.Fresolution, self.Fresolution)
-        s11 = np.ones_like(self.F)
-        s22 = np.ones_like(self.F)
-        s12 = 1/(1j*2*np.pi*self.F*C)
-        s21 = np.zeros_like(self.F)
-        self.matrix = np.array([[s11, s12],[s21, s22]])
+    def setMatrix_C(self, C, F):
+        self.F = F
+        A = np.ones_like(self.F)
+        B = 1/(1j*2*np.pi*self.F*C)
+        C = np.zeros_like(self.F)
+        D = np.ones_like(self.F)
+        self.matrix = np.array([[A, B],[C, D]])
 
 
     def setMatrix_ts(self, ts,  ctype = 'sparam', symmetric = True , inverse = False, length = 0, alpha = 0, eps_force = 0, F = [], Z0 = 0):
@@ -116,12 +118,16 @@ class ABCDmatrix(object):
                          [(1/Z0)*(((1-s11)*(1-s22)-(s12*s21))/(2*s21)),
                           (((1-s11)*(1+s22)+(s12*s21))/(2*s21))]])
 
-    def setMatrix_line(self, length, Z0, alpha, beta, F = [], eps_eff = -1):
+    def setMatrix_line(self, length, Z0, alpha, beta, F = [], eps_eff = -1, n = 3):
+        """
+        alpha :: alpha given at the center frequencyNp/m
+        n :: frequency dependence of alpha, default is 3 for radiation loss. 
+        """
         if F != []:
             self.F = F
             if np.any(beta == -1):
                 beta = 2*np.pi*(self.F/spc.c)*np.sqrt(eps_eff) # propagation constant
-            alpha = alpha*(self.F/(self.F[-1]+self.F[0])*2)**3 # alpha, set positive value in dB/mm for lossy case
+            alpha = alpha*(self.F/(self.F[-1]+self.F[0])*2)**n # alpha, set positive value in dB/mm for lossy case
             Z0 = np.full(self.F.shape, Z0)
         self.eps_eff= np.full(self.F.shape, eps_eff)
         self.a = alpha
@@ -133,22 +139,22 @@ class ABCDmatrix(object):
         [(1/Z0)*np.sinh((alpha*length)+(1j*beta*length)),
          np.cosh((alpha*length)+(1j*beta*length))]])
 
-    def multiply(self, *args):
+    def multiply(self, input_ABCD, parallelize = True):
         """
         Returns new matrix. Out = Self*args[0]*args[1]*...*args[N]
+        Do not use parallelize = False, only for legacy purposes. For Fres <0.001e9 parallelize = True speeds up about 10 times
         """
         M = np.zeros_like(self.matrix)
-        for i in xrange(len(self.F)):
-
-            M[:,:,i] = self.matrix[:,:,i].dot(args[0].matrix[:,:,i])
-            if len(args) > 1:
-                for arg in args[1:]:
-                    M[:,:,i] = M[:,:,i].dot(arg.matrix[:,:,i])
+        if parallelize:
+            M = np.einsum('abi,bci->aci', self.matrix, input_ABCD.matrix)
+        else:
+            for i in xrange(len(self.F)):
+                M[:,:,i] = self.matrix[:,:,i].dot(input_ABCD.matrix[:,:,i])
         out = ABCDmatrix()
         if np.any(self.eps_eff != None):
             out.eps_eff = self.eps_eff
         else:
-            out.eps_eff = args[0].eps_eff
+            out.eps_eff = input_ABCD.eps_eff
         out.F = self.F
         out.Fresolution = self.Fresolution
         out.matrix = M

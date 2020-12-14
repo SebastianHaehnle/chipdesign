@@ -28,6 +28,7 @@ class CPW(object):
         self.epsr = float(epsr)
         self.scgnd = scgnd # THIS IS GND PLANE FOR HYBRID
         self.PEC = PEC
+        self.Z0 = 0
         if scline != None:
             self.scline = scline
         else:
@@ -98,17 +99,43 @@ class CPW(object):
 
         return self.alphak, self.eeff_sc, self.Z0
 
-    def frankel(self, f, w, s, eps_r, eps_eff):
-        d = 350e-6
+    def frankel(self, f = 0, w = 0, s = 0, eps_r = 0,eps_eff = 0):
+        """
+        Returns (alpha [Np/m], eps_eff, Z0 [Ohm])
+        """
+        d = 5*350e-6
+        f = f or self.f
+        w = w or self.w
+        s = s or self.s
+        eps_r = eps_r or self.epsr
+        if eps_eff == -1:
+            eps_eff = 0
+        elif eps_eff == 0:
+            eps_eff = self.eeff_sc
         k = s / (s + 2*w)
         eps_q = (eps_r + 1)/2.
-
-        alpha = ((np.pi/2)**5)*2*(((1-(eps_eff/eps_r))**2)/np.sqrt(eps_eff/eps_r))*((((s+2*w)**2)*(eps_r**(3./2))*(f**3))/((spc.c**3)*scipy.special.ellipk(np.sqrt(1-(k**2)))*scipy.special.ellipk(k)))
-
+    
+        if eps_eff == 0:
+            f_TE = spc.c/(4*d*np.sqrt(eps_r-1))
+            q = np.log10(s/float(d))
+            u = 0.54-0.649*q+0.015*(q**2)
+            nu = 0.43-0.864*q+0.54*(q**2)
+    
+            a=10**((u*np.log(s/w))+nu)# % a parameter in effective permittivity
+            # Calculate effective permittivity
+            eps_eff = (np.sqrt(eps_q)+(np.sqrt(eps_r)+np.sqrt(eps_q))/(1+a*((f/f_TE)**(-1.8))))**2
+    
+        alpha = ((np.pi/2)**5)*2*(((1-(eps_eff/eps_r))**2)/np.sqrt(eps_eff/eps_r))*((((s+2*w)**2)*(eps_r**(3./2))*(f**3))/((spc.c**3)*scipy.special.ellipk((np.sqrt(1-k**1))**2)*scipy.special.ellipk(k**2)))
+    
         beta = 2*np.pi*(f/spc.c)*np.sqrt(eps_eff)
-
+    
         Z0CPW = ((120*np.pi)/np.sqrt(eps_eff))*(scipy.special.ellipk(np.sqrt(1-(k**2)))/(4.*scipy.special.ellipk(k)))
-        return alpha, beta, Z0CPW
+        
+        if self.Z0:
+            alpha_adj = alpha*self.Z0/Z0CPW
+        else:
+            alpha_adj = alpha
+        return alpha, beta, Z0CPW, alpha_adj
 
 
 if __name__ == '__main__':
@@ -148,6 +175,10 @@ if __name__ == '__main__':
     cpw.holloway()
 #    print tline.holloway()
 
+    cpw = CPW(3e-6, 3e-6, 10.5, scgnd = sc.Superconductor(14.7, 1.08e-6, t = 100e-9, f = 350e9))
+    cpw.holloway()
+    a, b, z, aa = cpw.frankel()
+    print a*8.686/1000, aa*8.686/1000
 #    # Measured LT149
 #    badNbTiN = sc.Superconductor(11.55, 157e-8, t = 100e-9, f = 350e9)
 #    w = 5e-6

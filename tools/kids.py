@@ -42,3 +42,12 @@ def gen_get_Lc(sonnetsweep, sweepparam = 'Lc', kid_length = 'quarterwave'):
         Lc_F = spi.splrep(f_arr, Lc_Qdesign)
         return spi.splev(F, Lc_F, der = 0)
     return get_Lc
+
+
+def mkid_resonator(frange, fres, Qc, Qi, output = 's'):
+    """
+    output options: s
+    """
+    Q = Qc*Qi/(Qc+Qi)
+    df = frange-fres
+    return (Q/Qi + 2j*Q*df/fres)/(1+2j*Q*df/fres) 
